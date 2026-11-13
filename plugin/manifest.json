@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "dimef.fan-control",
+  "name": "Fan Control",
+  "version": "1.0.0",
+  "author": "dimef",
+  "description": "Macs Fan Control for the MacBook Pro: auto curve, hold-a-temperature, constant speed, or Apple's own control, with ramp-up and full-blast thresholds.",
+  "license": "MIT",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Fan Control",
+    "description": "Fan speed, mode and temperature for the MacBook Pro's SMC fan",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false,
+    "defaults": {
+      "label": "none"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+[Unit]
+Description=Fan control for the MacBook Pro (applesmc)
+Documentation=file:///usr/local/share/doc/fan-control/README.md
+After=systemd-modules-load.service
+ConditionPathExists=/sys/devices/platform/applesmc.768
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fanctl daemon
+# Runs after any stop, including a crash, so the SMC always gets the fan back.
+ExecStopPost=/usr/local/bin/fanctl release
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=fan-control
+RuntimeDirectoryMode=0755
+Nice=-5
+
+# The daemon only needs to read /etc/fan-control and write the SMC's sysfs
+# attributes and its own state file.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
