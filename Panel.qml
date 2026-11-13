@@ -57,9 +57,10 @@ Panel {
   readonly property int percent: Model.fanPercent(rpm, fanMin, fanMax)
   readonly property real controlTemp: control && control.temp !== null && control.temp !== undefined ? Number(control.temp) : NaN
   readonly property string controlSensorId: control && control.sensor ? control.sensor : cfg.sensor
-  readonly property string controlSensorName: Model.sensorName(state, controlSensorId)
+  readonly property string controlSensorName: sensorLabel(controlSensorId, Model.sensorName(state, controlSensorId))
   readonly property bool overriding: online && control !== null && Model.isOverride(control.reason)
-  readonly property var sensorList: state && Array.isArray(state.sensors) ? state.sensors.slice(0, 32) : []
+  readonly property var sensorList: Model.sanitizeSensors(state && state.sensors)
+  readonly property string daemonError: Model.safeText(state && state.error, Model.MAX_ERROR)
 
   readonly property color fg: root.bar ? root.bar.foreground : Commons.Color.foreground
   readonly property color dim: Qt.darker(fg, 1.4)
@@ -128,7 +129,7 @@ Panel {
     id: setProc
     stderr: StdioCollector { id: setErr; waitForEnd: true }
     onExited: function(exitCode) {
-      root.lastError = exitCode === 0 ? "" : String(setErr.text || "").trim().slice(0, 200)
+      root.lastError = exitCode === 0 ? "" : Model.safeText(String(setErr.text || "").trim(), Model.MAX_ERROR)
       root.flush()
     }
   }
@@ -246,6 +247,9 @@ Panel {
   // ------------------------------------------------------------- strings
   function modeLabel(mode) { return strings.t("mode." + mode) }
 
+  // The daemon's English sensor names, translated when the catalog has them.
+  function sensorLabel(id, fallback) { return strings.t("sensor." + id, fallback) }
+
   function statusText() {
     if (!online) return ""
     var reason = control ? control.reason : ""
@@ -262,8 +266,8 @@ Panel {
 
   function sliderValueText(key, value) {
     if (key === "manualRpm")
-      return strings.t("rpm").arg(Commons.I18n.formatNumber(Math.round(value))) + "  ·  "
-        + strings.t("percent").arg(Commons.I18n.formatNumber(Model.fanPercent(value, fanMin, fanMax)))
+      return strings.t("slider.manualRpm.value").arg(Commons.I18n.formatNumber(Math.round(value)))
+        .arg(Commons.I18n.formatNumber(Model.fanPercent(value, fanMin, fanMax)))
     return deg(value)
   }
 
@@ -362,7 +366,7 @@ Panel {
             fontFamily: root.fontFamily
             title: root.online ? strings.t("rpm").arg(Commons.I18n.formatNumber(Math.round(root.rpm))) : strings.t("title")
             meta: root.online
-              ? root.controlSensorName + "  " + root.deg(root.controlTemp)
+              ? strings.t("hero.meta").arg(root.controlSensorName).arg(root.deg(root.controlTemp))
               : strings.t("offline.title")
             detail: root.online ? root.modeLabel(root.cfg.mode) : ""
             iconComponent: Component {
@@ -429,7 +433,9 @@ Panel {
               labels: ({
                 ramp: strings.t("chart.ramp"),
                 blast: strings.t("chart.blast"),
-                target: strings.t("chart.target")
+                target: strings.t("chart.target"),
+                degrees: strings.t("chart.degrees"),
+                minutesAgo: strings.t("chart.minutesAgo")
               })
             }
 
@@ -445,11 +451,11 @@ Panel {
             }
 
             Text {
-              visible: root.lastError !== "" || (root.state && root.state.error)
+              visible: root.lastError !== "" || root.daemonError !== ""
               width: parent.width
               textFormat: Text.PlainText
               wrapMode: Text.Wrap
-              text: root.lastError !== "" ? strings.t("error.write").arg(root.lastError) : String(root.state && root.state.error || "")
+              text: root.lastError !== "" ? strings.t("error.write").arg(root.lastError) : root.daemonError
               color: Commons.Color.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -678,7 +684,7 @@ Panel {
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       textFormat: Text.PlainText
-      text: String(cell.sensor.name || cell.sensor.id)
+      text: root.sensorLabel(cell.sensor.id, cell.sensor.name)
       elide: Text.ElideRight
       color: cell.controlling ? root.fg : root.dim
       font.family: root.fontFamily

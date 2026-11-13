@@ -5,11 +5,14 @@
 var MODES = ["auto", "target", "manual", "system"]
 var LIMITS = {
   manualRpm: [1000, 8000],
-  targetTemp: [45, 90],
+  targetTemp: [35, 90],
   rampStart: [30, 90],
   fullBlast: [40, 95]
 }
-var MIN_CURVE_SPAN = 5
+var MIN_CURVE_SPAN = 5  // °C that rampStart and targetTemp stay below fullBlast
+var MAX_NAME = 40       // characters of daemon-supplied text shown in one label
+var MAX_ERROR = 200
+var MAX_SENSORS = 32
 var DEFAULTS = { mode: "auto", sensor: "cpu", manualRpm: 3000, targetTemp: 70, rampStart: 55, fullBlast: 85 }
 
 // The daemon writes state once a second; older than this means it stopped.
@@ -58,15 +61,12 @@ function normalizeConfig(raw, prefer) {
     var n = Number(cfg[name])
     cfg[name] = isFinite(n) ? clamp(Math.round(n), LIMITS[name][0], LIMITS[name][1]) : DEFAULTS[name]
   }
-  if (cfg.fullBlast - cfg.rampStart < MIN_CURVE_SPAN) {
-    if (prefer === "rampStart") {
-      cfg.fullBlast = Math.min(LIMITS.fullBlast[1], cfg.rampStart + MIN_CURVE_SPAN)
-      cfg.rampStart = cfg.fullBlast - MIN_CURVE_SPAN
-    } else {
-      cfg.rampStart = Math.max(LIMITS.rampStart[0], cfg.fullBlast - MIN_CURVE_SPAN)
-      cfg.fullBlast = cfg.rampStart + MIN_CURVE_SPAN
-    }
-  }
+  // Same rule as the daemon: the key just moved pushes full blast up,
+  // otherwise full blast stands and the others come down to meet it.
+  if (prefer === "rampStart" || prefer === "targetTemp")
+    cfg.fullBlast = Math.min(LIMITS.fullBlast[1], Math.max(cfg.fullBlast, cfg[prefer] + MIN_CURVE_SPAN))
+  cfg.rampStart = Math.min(cfg.rampStart, cfg.fullBlast - MIN_CURVE_SPAN)
+  cfg.targetTemp = Math.min(cfg.targetTemp, cfg.fullBlast - MIN_CURVE_SPAN)
   return cfg
 }
 
@@ -110,16 +110,42 @@ function barGlyph(online, state) {
   return GLYPH.fan
 }
 
+// Text from state.json or a subprocess, made safe for any Text sink: no
+// control characters, no angle brackets for a rich-text parser to act on
+// (swapped for look-alikes), and at most maxLength characters.
+function safeText(value, maxLength) {
+  if (value === null || value === undefined) return ""
+  var text = String(value).replace(/[\u0000-\u001f\u007f]/g, "").replace(/</g, "\u2039").replace(/>/g, "\u203a")
+  return text.length > maxLength ? text.slice(0, maxLength) : text
+}
+
+var SENSOR_ID = /^[a-z0-9-]{1,32}$/
+
+// The daemon's sensor list, validated: known-shape ids, bounded names,
+// numeric temperatures, and at most MAX_SENSORS entries.
+function sanitizeSensors(list) {
+  if (!Array.isArray(list)) return []
+  var out = []
+  for (var i = 0; i < list.length && out.length < MAX_SENSORS; i++) {
+    var s = list[i]
+    if (!s || typeof s !== "object" || !SENSOR_ID.test(String(s.id))) continue
+    var temp = Number(s.temp)
+    if (!isFinite(temp)) continue
+    out.push({ id: String(s.id), name: safeText(s.name || s.id, MAX_NAME), temp: temp })
+  }
+  return out
+}
+
 function sensorTemp(state, id) {
-  var list = state && Array.isArray(state.sensors) ? state.sensors : []
-  for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return Number(list[i].temp)
+  var list = sanitizeSensors(state && state.sensors)
+  for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i].temp
   return NaN
 }
 
 function sensorName(state, id) {
-  var list = state && Array.isArray(state.sensors) ? state.sensors : []
-  for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return String(list[i].name || id)
-  return String(id || "")
+  var list = sanitizeSensors(state && state.sensors)
+  for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i].name
+  return safeText(id, MAX_NAME)
 }
 
 // Fixed-length ring of samples for the history chart.
@@ -154,6 +180,7 @@ function sliderRange(key, fan) {
 if (typeof module !== "undefined") {
   module.exports = {
     MODES: MODES, LIMITS: LIMITS, DEFAULTS: DEFAULTS, GLYPH: GLYPH, STALE_SECONDS: STALE_SECONDS,
+    MAX_NAME: MAX_NAME, MAX_ERROR: MAX_ERROR, MAX_SENSORS: MAX_SENSORS, safeText: safeText, sanitizeSensors: sanitizeSensors,
     isOnline: isOnline, parseState: parseState, clamp: clamp, normalizeConfig: normalizeConfig,
     mergeOverrides: mergeOverrides, fanPercent: fanPercent, curveRpm: curveRpm, isOverride: isOverride,
     barGlyph: barGlyph, sensorTemp: sensorTemp, sensorName: sensorName, pushSample: pushSample,

@@ -49,11 +49,11 @@ DEFAULTS = {
 # fan's own min/max at runtime.
 LIMITS = {
     "manualRpm": (1000, 8000),
-    "targetTemp": (45, 90),
+    "targetTemp": (35, 90),
     "rampStart": (30, 90),
     "fullBlast": (40, 95),
 }
-MIN_CURVE_SPAN = 5  # °C between rampStart and fullBlast
+MIN_CURVE_SPAN = 5  # °C that rampStart and targetTemp stay below fullBlast
 
 HARD_LIMIT_C = 95.0      # CPU package: full speed no matter what
 BLAST_HYSTERESIS_C = 3.0  # full blast releases this far below the threshold
@@ -120,13 +120,16 @@ def normalize_config(raw, prefer=None) -> dict:
     for key, (low, high) in LIMITS.items():
         cfg[key] = max(low, min(high, _as_int(cfg[key], DEFAULTS[key])))
 
-    if cfg["fullBlast"] - cfg["rampStart"] < MIN_CURVE_SPAN:
-        if prefer == "rampStart":
-            cfg["fullBlast"] = min(LIMITS["fullBlast"][1], cfg["rampStart"] + MIN_CURVE_SPAN)
-            cfg["rampStart"] = cfg["fullBlast"] - MIN_CURVE_SPAN
-        else:
-            cfg["rampStart"] = max(LIMITS["rampStart"][0], cfg["fullBlast"] - MIN_CURVE_SPAN)
-            cfg["fullBlast"] = cfg["rampStart"] + MIN_CURVE_SPAN
+    # rampStart and targetTemp both stay MIN_CURVE_SPAN below fullBlast:
+    # the curve needs room to climb, and a hold temperature at or above full
+    # blast would bounce the fan between minimum and maximum. The key the user
+    # just moved wins and pushes full blast up; otherwise full blast stands and
+    # the others come down to meet it.
+    high = LIMITS["fullBlast"][1]
+    if prefer in ("rampStart", "targetTemp"):
+        cfg["fullBlast"] = min(high, max(cfg["fullBlast"], cfg[prefer] + MIN_CURVE_SPAN))
+    for key in ("rampStart", "targetTemp"):
+        cfg[key] = min(cfg[key], cfg["fullBlast"] - MIN_CURVE_SPAN)
     return cfg
 
 

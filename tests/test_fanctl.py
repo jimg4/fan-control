@@ -37,7 +37,7 @@ class ConfigTests(unittest.TestCase):
     def test_values_are_clamped(self):
         c = fanctl.normalize_config({"manualRpm": 99999, "targetTemp": -5, "fullBlast": "nan"})
         self.assertEqual(c["manualRpm"], 8000)
-        self.assertEqual(c["targetTemp"], 45)
+        self.assertEqual(c["targetTemp"], fanctl.LIMITS["targetTemp"][0])
         self.assertEqual(c["fullBlast"], fanctl.DEFAULTS["fullBlast"])
 
     def test_raising_ramp_pushes_full_blast_up(self):
@@ -53,6 +53,27 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual((c["rampStart"], c["fullBlast"]), (90, 95))
         c = fanctl.apply_changes(c, [("rampStart", "93")])
         self.assertGreaterEqual(c["fullBlast"] - c["rampStart"], fanctl.MIN_CURVE_SPAN)
+
+    def test_target_stays_below_full_blast(self):
+        # Lowering full blast drags the hold temperature down with it...
+        c = fanctl.apply_changes(cfg(targetTemp=70, fullBlast=85), [("blast", "65")])
+        self.assertEqual((c["targetTemp"], c["fullBlast"]), (60, 65))
+        # ...and raising the hold temperature pushes full blast up.
+        c = fanctl.apply_changes(cfg(targetTemp=70, fullBlast=85), [("target", "88")])
+        self.assertEqual((c["targetTemp"], c["fullBlast"]), (88, 93))
+        c = fanctl.apply_changes(cfg(), [("target", "90")])
+        self.assertEqual((c["targetTemp"], c["fullBlast"]), (90, 95))
+
+    def test_inconsistent_file_is_repaired_on_read(self):
+        c = fanctl.normalize_config({"targetTemp": 69, "fullBlast": 65, "rampStart": 47})
+        self.assertEqual((c["rampStart"], c["targetTemp"], c["fullBlast"]), (47, 60, 65))
+
+    def test_lowest_full_blast_keeps_every_threshold_valid(self):
+        c = fanctl.apply_changes(cfg(), [("blast", "0")])
+        self.assertEqual(c["fullBlast"], 40)
+        self.assertLessEqual(c["targetTemp"], 35)
+        self.assertLessEqual(c["rampStart"], 35)
+        self.assertGreaterEqual(c["targetTemp"], fanctl.LIMITS["targetTemp"][0])
 
     def test_rejects_unknown_keys_and_values(self):
         with self.assertRaises(ValueError):
@@ -194,6 +215,36 @@ class ControllerTests(unittest.TestCase):
         tail = history[-120:]
         self.assertLess(abs(sum(tail) / len(tail) - 72), 1.0)
         self.assertLess(max(tail) - min(tail), 2.0)
+
+
+class TargetNearFullBlastTests(unittest.TestCase):
+    """Target mode with the default full blast (85°C) and a target close to it."""
+
+    def settle(self, target, seconds=900):
+        c = fanctl.Controller(fan_min=FAN_MIN, fan_max=FAN_MAX)
+        config = fanctl.apply_changes(cfg(mode="target"), [("target", str(target))])
+        temp, ambient, tail = 85.0, 30.0, []
+        for i in range(seconds):
+            d = c.step(config, {"cpu": temp}, 1.0)
+            cooling = 0.02 + 0.06 * (d.rpm - FAN_MIN) / (FAN_MAX - FAN_MIN)
+            temp += 1.2 - cooling * (temp - ambient) * 0.75
+            if i >= seconds - 120:
+                tail.append((temp, d.rpm, d.reason))
+        return config, tail
+
+    def test_holds_target_just_under_full_blast(self):
+        config, tail = self.settle(80)
+        self.assertEqual(config["fullBlast"], 85)
+        temps = [t for t, _, _ in tail]
+        self.assertLess(abs(sum(temps) / len(temps) - 80), 1.0)
+        self.assertLess(max(temps) - min(temps), 2.0)
+        self.assertNotIn("full-blast", {r for _, _, r in tail})
+
+    def test_target_above_old_full_blast_does_not_bang_bang(self):
+        config, tail = self.settle(88)
+        self.assertEqual(config["fullBlast"], 93)
+        rpms = [r for _, r, _ in tail]
+        self.assertLess(max(rpms) - min(rpms), 1500)
 
 
 class FakeHwmon:

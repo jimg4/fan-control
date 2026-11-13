@@ -30,7 +30,8 @@ Canvas {
   property color background: Commons.Color.background
   property string fontFamily: Style.font.family
   property int fontSize: Style.font.caption
-  property var labels: ({ ramp: "ramp %1", blast: "full %1", target: "hold %1" })
+  // Whole strings from the plugin catalog, each with a %1 placeholder.
+  property var labels: ({ ramp: "%1", blast: "%1", target: "%1", degrees: "%1", minutesAgo: "%1" })
 
   readonly property var paintKey: [kind, temps, rpms, fanMin, fanMax, rampStart, fullBlast, targetTemp,
     liveTemp, liveRpm, foreground, accent, urgent, background, fontFamily, fontSize, width, height, labels]
@@ -40,7 +41,7 @@ Canvas {
   readonly property real padBottom: fontSize + Style.space(6)
 
   function rgba(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
-  function degrees(t) { return Commons.I18n.formatNumber(Math.round(t)) + "°" }
+  function degrees(t) { return labels.degrees.arg(Commons.I18n.formatNumber(Math.round(t))) }
 
   function dashedLine(ctx, x1, y1, x2, y2, dash, gap) {
     var len = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
@@ -173,7 +174,7 @@ Canvas {
       ctx.stroke()
     }
 
-    label(ctx, "-" + Commons.I18n.formatNumber(Math.round(n / 60)) + "m", Style.space(2), h - Style.space(1), rgba(foreground, 0.4), "left")
+    label(ctx, labels.minutesAgo.arg(Commons.I18n.formatNumber(Math.round(n / 60))), Style.space(2), h - Style.space(1), rgba(foreground, 0.4), "left")
     if (temps.length > 0 && isFinite(Number(temps[temps.length - 1])))
       label(ctx, degrees(Number(temps[temps.length - 1])), w - Style.space(2), h - Style.space(1), dim, "right")
   }

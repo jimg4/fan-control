@@ -2,7 +2,7 @@
 const test = require("node:test")
 const assert = require("node:assert/strict")
 const path = require("node:path")
-const M = require(path.join(__dirname, "..", "plugin", "Model.js"))
+const M = require(path.join(__dirname, "..", "Model.js"))
 
 test("state older than the stale window is offline", () => {
   assert.equal(M.isOnline({ time: 100 }, 102), true)
@@ -74,4 +74,44 @@ test("sensor lookups", () => {
   assert.equal(M.sensorTemp(s, "cpu"), 71.5)
   assert.ok(Number.isNaN(M.sensorTemp(s, "gpu")))
   assert.equal(M.sensorName(s, "cpu"), "CPU Package")
+})
+
+test("normalizeConfig keeps the hold temperature below full blast", () => {
+  let c = M.normalizeConfig({ targetTemp: 70, fullBlast: 65 }, "fullBlast")
+  assert.deepEqual([c.targetTemp, c.fullBlast], [60, 65])
+  c = M.normalizeConfig({ targetTemp: 88, fullBlast: 85 }, "targetTemp")
+  assert.deepEqual([c.targetTemp, c.fullBlast], [88, 93])
+  c = M.normalizeConfig({ targetTemp: 69, fullBlast: 65, rampStart: 47 })
+  assert.deepEqual([c.rampStart, c.targetTemp, c.fullBlast], [47, 60, 65])
+})
+
+test("safeText neutralizes markup-shaped input and bounds length", () => {
+  const out = M.safeText('<img src="https://example.invalid/tracker">', 64)
+  assert.ok(!out.includes("<") && !out.includes(">"))
+  assert.equal(M.safeText("a\u0000b\nc", 10), "abc")
+  assert.equal(M.safeText("x".repeat(100), 10).length, 10)
+  assert.equal(M.safeText(null, 10), "")
+  assert.equal(M.safeText({ toString() { return "<b>" } }, 10), "‹b›")
+})
+
+test("sanitizeSensors drops bad ids, bounds names and the list", () => {
+  const list = M.sanitizeSensors([
+    { id: "cpu", name: "<b>CPU</b> Package", temp: 71.5 },
+    { id: "../etc", name: "bad", temp: 1 },
+    { id: "gpu", name: "y".repeat(200), temp: "60" },
+    { id: "ssd", name: "SSD", temp: "hot" },
+    null
+  ])
+  assert.deepEqual(list.map(s => s.id), ["cpu", "gpu"])
+  assert.ok(!list[0].name.includes("<"))
+  assert.equal(list[1].name.length, M.MAX_NAME)
+  assert.equal(list[1].temp, 60)
+  assert.equal(M.sanitizeSensors(Array.from({ length: 100 }, (_, i) => ({ id: "s" + i, name: "n", temp: 1 }))).length, M.MAX_SENSORS)
+  assert.deepEqual(M.sanitizeSensors("nope"), [])
+})
+
+test("the tooltip sink never receives markup", () => {
+  const state = { sensors: [{ id: "cpu", name: '<img src="https://example.invalid/t">', temp: 70 }] }
+  assert.ok(!M.sensorName(state, "cpu").includes("<"))
+  assert.ok(!M.sensorName(state, "<script>").includes("<"))
 })

@@ -3,8 +3,9 @@
   "id": "dimef.fan-control",
   "name": "Fan Control",
   "version": "1.0.0",
-  "author": "dimef",
-  "description": "Macs Fan Control for the MacBook Pro: auto curve, hold-a-temperature, constant speed, or Apple's own control, with ramp-up and full-blast thresholds.",
+  "author": "jimg4",
+  "description": "Macs Fan Control-style fan control for the 2017 13\" MacBook Pro (MacBookPro14,1, applesmc): an auto curve with ramp-up and full-blast temperatures, hold-a-temperature, constant speed, or Apple's own control. Needs its small root service, set up once from the README.",
+  "repository": "https://github.com/jimg4/fan-control",
   "license": "MIT",
   "kinds": [
     "bar-widget"
