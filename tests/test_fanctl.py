@@ -71,6 +71,52 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(fanctl.load_config(path)["mode"], "auto")
 
 
+class ConfigFileSafetyTests(unittest.TestCase):
+    """config.json is writable by wheel; the root daemon must treat it as hostile."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.path = self.dir / "config.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_symlinked_config_is_not_followed(self):
+        target = self.dir / "elsewhere.json"
+        target.write_text(json.dumps({"mode": "manual"}))
+        self.path.symlink_to(target)
+        self.assertIsNone(fanctl.read_config(self.path))
+        with self.assertRaises(OSError):
+            fanctl.write_config(fanctl.normalize_config(None), self.path)
+        self.assertEqual(json.loads(target.read_text()), {"mode": "manual"})
+
+    def test_fifo_does_not_block(self):
+        os.mkfifo(self.path)
+        self.assertIsNone(fanctl.read_config(self.path))  # would hang without O_NONBLOCK
+        with self.assertRaises(OSError):
+            fanctl.write_config(fanctl.normalize_config(None), self.path)
+
+    def test_write_config_rewrites_in_place(self):
+        fanctl.write_config(fanctl.normalize_config({"mode": "manual", "manualRpm": 4000}), self.path)
+        inode = self.path.stat().st_ino
+        fanctl.write_config(fanctl.normalize_config({"mode": "target"}), self.path)
+        self.assertEqual(self.path.stat().st_ino, inode)
+        self.assertEqual(fanctl.read_config(self.path)["mode"], "target")
+
+    def test_daemon_keeps_last_good_config_on_bad_read(self):
+        root = self.dir / "hwmon"
+        root.mkdir()
+        FakeHwmon(root)
+        fanctl.write_config(fanctl.normalize_config({"mode": "manual"}), self.path)
+        daemon = fanctl.Daemon(self.path, self.dir / "state.json", root, clock=lambda: 0.0)
+        self.assertEqual(daemon.config["mode"], "manual")
+        self.path.write_text('{"mode": "sys')  # caught mid-write
+        os.utime(self.path, ns=(1, 1))
+        daemon.reload_config_if_changed()
+        self.assertEqual(daemon.config["mode"], "manual")
+
+
 class CurveTests(unittest.TestCase):
     def test_curve_shape(self):
         self.assertEqual(fanctl.curve_rpm(40, 55, 85, FAN_MIN, FAN_MAX), FAN_MIN)

@@ -26,14 +26,26 @@ install -Dm755 "$here/fanctl.py" /usr/local/bin/fanctl
 install -Dm644 "$here/fan-control.service" /etc/systemd/system/fan-control.service
 install -Dm644 "$here/../README.md" /usr/local/share/doc/fan-control/README.md
 
-# Members of wheel (who can sudo anyway) may change settings without a
-# password; the daemon re-validates and clamps everything it reads.
-install -d -m 2775 -o root -g wheel /etc/fan-control
-if [[ ! -f /etc/fan-control/config.json ]]; then
-  FANCTL_CONFIG=/etc/fan-control/config.json /usr/local/bin/fanctl mode auto >/dev/null
+# The directory stays root-only so nobody else can create, replace or
+# symlink files in it. Only config.json itself is writable by wheel (who can
+# sudo anyway); the daemon opens it without following links and re-validates
+# everything it reads.
+conf_dir=/etc/fan-control
+conf=$conf_dir/config.json
+install -d -m 0755 -o root -g root "$conf_dir"
+chown root:root "$conf_dir"
+chmod 00755 "$conf_dir"  # 00 also clears a leftover setgid bit
+rm -f "$conf_dir"/.tmp-*
+if [[ -L $conf || ( -e $conf && ! -f $conf ) ]]; then
+  echo "Replacing $conf: it is not a regular file." >&2
+  rm -f "$conf"
 fi
-chgrp wheel /etc/fan-control/config.json
-chmod 0664 /etc/fan-control/config.json
+if [[ ! -f $conf ]]; then
+  FANCTL_CONFIG=$conf /usr/local/bin/fanctl mode auto >/dev/null
+fi
+# -h and the regular-file check above keep these off any symlink target.
+chown -h root:wheel "$conf"
+chmod 0664 "$conf"
 
 systemctl daemon-reload
 systemctl enable fan-control.service

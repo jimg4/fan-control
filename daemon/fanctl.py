@@ -23,6 +23,7 @@ import json
 import math
 import os
 import signal
+import stat
 import sys
 import tempfile
 import time
@@ -129,15 +130,53 @@ def normalize_config(raw, prefer=None) -> dict:
     return cfg
 
 
-def load_config(path: Path = CONFIG_PATH) -> dict:
+def read_config(path: Path = CONFIG_PATH):
+    """Parse the config, or return None if it is missing, unsafe or malformed.
+
+    The file is writable by `wheel`, so treat it as hostile: never follow a
+    symlink, never block on a FIFO or device, and cap how much is read.
+    """
     try:
-        with open(path, "rb") as handle:
-            data = handle.read(MAX_CONFIG_BYTES + 1)
-        if len(data) > MAX_CONFIG_BYTES:
-            return normalize_config(None)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        data = os.read(fd, MAX_CONFIG_BYTES + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    if len(data) > MAX_CONFIG_BYTES:
+        return None
+    try:
         return normalize_config(json.loads(data.decode("utf-8")))
-    except (OSError, ValueError, UnicodeDecodeError):
-        return normalize_config(None)
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def load_config(path: Path = CONFIG_PATH) -> dict:
+    return read_config(path) or normalize_config(None)
+
+
+def write_config(cfg: dict, path: Path = CONFIG_PATH):
+    """Rewrite the config in place.
+
+    The directory is root-owned and not group-writable, so the CLI can't
+    rename a temp file over the config; it rewrites the existing file instead.
+    A reader that catches it half-written gets a parse error and keeps its
+    previous config.
+    """
+    payload = (json.dumps(cfg, indent=2, sort_keys=True) + "\n").encode()
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o664)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"{path} is not a regular file")
+        os.ftruncate(fd, 0)
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
 
 
 def atomic_write_json(path: Path, payload, mode=0o664):
@@ -466,7 +505,8 @@ class Daemon:
         mtime = self._config_mtime()
         if mtime != self.config_mtime:
             self.config_mtime = mtime
-            self.config = load_config(self.config_path)
+            # A failed read (mid-write, deleted, tampered with) keeps the last good config.
+            self.config = read_config(self.config_path) or self.config
 
     def tick(self):
         now = self.clock()
@@ -645,7 +685,7 @@ def main(argv=None) -> int:
             return 2
         try:
             cfg = apply_changes(load_config(), pairs)
-            atomic_write_json(CONFIG_PATH, cfg)
+            write_config(cfg)
         except ValueError as exc:
             print(f"fanctl: {exc}", file=sys.stderr)
             return 2
